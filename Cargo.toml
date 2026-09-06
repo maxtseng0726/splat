@@ -3,4 +3,15 @@ name = "splat"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "splat_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "Splat"
+path = "src/bin/main.rs"
+
 [dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+winit = "0.30.13"
