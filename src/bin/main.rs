@@ -1,7 +1,8 @@
+use anyhow::Result;
 use clap::Parser;
-use splat_lib as lib;
 use winit::event_loop::EventLoop;
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use splat_lib as lib;
+fn main() -> Result<()> {
     let cli = lib::Cli::parse();
 
     let event_loop = EventLoop::new()?;
