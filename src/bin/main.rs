@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use winit::event_loop::EventLoop;
 use splat_lib as lib;
+use winit::event_loop::EventLoop;
 fn main() -> Result<()> {
     let cli = lib::Cli::parse();
 
