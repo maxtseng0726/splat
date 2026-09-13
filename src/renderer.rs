@@ -9,6 +9,7 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     config: SurfaceConfiguration,
+    render_pipeline: RenderPipeline,
 }
 
 impl Renderer {
@@ -59,11 +60,64 @@ impl Renderer {
 
         surface.configure(&device, &config);
 
+        // Load internal WGSL shaders directly into native runtime GPU modules
+        let shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Triangle Shader"),
+            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        // Set up empty pipeline layout configurations since vertices are hardcoded internally
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+
+        // Assemble the modern immutable RenderPipeline infrastructure
+        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format: config.format,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                polygon_mode: PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
             surface,
             device,
             queue,
             config,
+            render_pipeline,
         }
     }
 
@@ -95,7 +149,7 @@ impl Renderer {
             .create_command_encoder(&CommandEncoderDescriptor { label: None });
 
         {
-            let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
@@ -116,6 +170,8 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
+            pass.set_pipeline(&self.render_pipeline);
+            pass.draw(0..3, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
