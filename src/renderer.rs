@@ -9,7 +9,11 @@ pub struct Renderer {
     device: Device,
     queue: Queue,
     config: SurfaceConfiguration,
-    render_pipeline: RenderPipeline,
+    pipeline: RenderPipeline,
+    bind_group_layout: BindGroupLayout,
+    sampler: Sampler,
+    text_texture: Option<Texture>,
+    text_bind_group: Option<BindGroup>,
 }
 
 impl Renderer {
@@ -62,54 +66,76 @@ impl Renderer {
 
         // Load internal WGSL shaders directly into native runtime GPU modules
         let shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Triangle Shader"),
+            label: Some("text shader"),
             source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        // Set up empty pipeline layout configurations since vertices are hardcoded internally
-        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("text bind group layout"),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: TextureViewDimension::D2,
+                        sample_type: TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("text pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
-        // Assemble the modern immutable RenderPipeline infrastructure
-        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("text pipeline"),
+            layout: Some(&pipeline_layout),
+
             vertex: VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 buffers: &[],
                 compilation_options: PipelineCompilationOptions::default(),
             },
+
             fragment: Some(FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
-                    format: config.format,
-                    blend: Some(BlendState::REPLACE),
+                    format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
             }),
+
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: FrontFace::Ccw,
-                cull_mode: Some(Face::Back),
-                polygon_mode: PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
+                ..Default::default()
             },
+
             depth_stencil: None,
-            multisample: MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample: MultisampleState::default(),
             multiview_mask: None,
             cache: None,
+        });
+
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("text sampler"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
         });
 
         Self {
@@ -117,7 +143,11 @@ impl Renderer {
             device,
             queue,
             config,
-            render_pipeline,
+            pipeline,
+            bind_group_layout,
+            sampler,
+            text_texture: None,
+            text_bind_group: None,
         }
     }
 
@@ -125,6 +155,63 @@ impl Renderer {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
+    }
+
+    pub fn update_texture(&mut self, pixels: &[u8], width: u32, height: u32) {
+        let texture = self.device.create_texture(&TextureDescriptor {
+            label: Some("text texture"),
+            size: Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        self.queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            pixels,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view = texture.create_view(&TextureViewDescriptor::default());
+
+        let bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("text bind group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        self.text_texture = Some(texture);
+        self.text_bind_group = Some(bind_group);
     }
 
     pub fn render(&self) {
@@ -150,7 +237,7 @@ impl Renderer {
 
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: None,
+                label: Some("text render pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,
@@ -170,8 +257,12 @@ impl Renderer {
                 timestamp_writes: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.render_pipeline);
-            pass.draw(0..3, 0..1);
+
+            if let Some(bind_group) = &self.text_bind_group {
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
         }
 
         self.queue.submit(Some(encoder.finish()));
