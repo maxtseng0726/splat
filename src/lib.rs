@@ -3,6 +3,7 @@ mod renderer;
 use std::sync::Arc;
 
 use clap::Parser;
+use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache};
 use renderer::Renderer;
 use winit::{
     application::ApplicationHandler,
@@ -31,6 +32,9 @@ pub struct App {
     height: u32,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
+    font_system: FontSystem,
+    swash_cache: SwashCache,
+    buffer: Option<Buffer>,
 }
 
 impl App {
@@ -41,7 +45,73 @@ impl App {
             height,
             window: None,
             renderer: None,
+            font_system: FontSystem::new(),
+            swash_cache: SwashCache::new(),
+            buffer: None,
         }
+    }
+    fn rasterize_text(&mut self) -> Vec<u8> {
+        let width = self.width;
+        let height = self.height;
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+        let Some(buffer) = &mut self.buffer else {
+            return pixels;
+        };
+
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                let physical_glyph = glyph.physical((0.0, run.line_y), 1.0);
+
+                let Some(image) = self
+                    .swash_cache
+                    .get_image(&mut self.font_system, physical_glyph.cache_key)
+                else {
+                    continue;
+                };
+
+                let glyph_x = physical_glyph.x + image.placement.left;
+                let glyph_y = physical_glyph.y - image.placement.top;
+
+                let glyph_width = image.placement.width as usize;
+                let glyph_height = image.placement.height as usize;
+
+                if glyph_width == 0 || glyph_height == 0 {
+                    continue;
+                }
+
+                for y in 0..glyph_height {
+                    for x in 0..glyph_width {
+                        let src_index = y * glyph_width + x;
+
+                        let Some(&alpha) = image.data.get(src_index) else {
+                            continue;
+                        };
+
+                        if alpha == 0 {
+                            continue;
+                        }
+
+                        let px = glyph_x + x as i32;
+                        let py = glyph_y + y as i32;
+
+                        if px < 0 || py < 0 || px >= width as i32 || py >= height as i32 {
+                            continue;
+                        }
+
+                        let dst_index = ((py as usize * width as usize + px as usize) * 4) as usize;
+
+                        pixels[dst_index] = 255;
+                        pixels[dst_index + 1] = 255;
+                        pixels[dst_index + 2] = 255;
+                        pixels[dst_index + 3] = alpha;
+                    }
+                }
+            }
+        }
+
+        pixels
     }
 }
 
@@ -52,6 +122,18 @@ impl ApplicationHandler for App {
             .with_inner_size(LogicalSize::new(self.width, self.height));
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
+
+        let metrics = Metrics::new(24.0, 32.0);
+
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+
+        buffer.set_size(Some(self.width as f32), Some(self.height as f32));
+
+        buffer.set_text("Hello, World!", &Attrs::new(), Shaping::Advanced, None);
+
+        buffer.shape_until_scroll(&mut self.font_system, true);
+
+        self.buffer = Some(buffer);
 
         self.renderer = Some(Renderer::new(window.clone()));
         self.window = Some(window);
@@ -73,7 +155,10 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &self.renderer {
+                let pixels = self.rasterize_text();
+
+                if let Some(renderer) = &mut self.renderer {
+                    renderer.update_texture(&pixels, self.width, self.height);
                     renderer.render();
                 }
             }
