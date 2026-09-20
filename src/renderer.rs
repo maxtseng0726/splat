@@ -3,6 +3,7 @@ use std::sync::Arc;
 use wgpu::*;
 use winit::window::Window;
 
+use crate::error::RendererError;
 /// GPU state, created once a window exists (needs a live surface).
 pub struct Renderer {
     surface: Surface<'static>,
@@ -18,11 +19,13 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(window: Arc<Window>) -> Self {
+    pub fn new(window: Arc<Window>) -> Result<Self, RendererError> {
         let size = window.inner_size();
 
         let instance = Instance::new(InstanceDescriptor::new_without_display_handle());
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = instance
+            .create_surface(window.clone())
+            .map_err(RendererError::Surface)?;
 
         let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::default(),
@@ -30,7 +33,7 @@ impl Renderer {
             compatible_surface: Some(&surface),
             apply_limit_buckets: false,
         }))
-        .expect("no suitable GPU adapter found");
+        .map_err(|_| RendererError::NoAdapter)?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: None,
@@ -40,7 +43,7 @@ impl Renderer {
             memory_hints: MemoryHints::Performance,
             trace: Trace::Off,
         }))
-        .expect("failed to create device");
+        .map_err(RendererError::Device)?;
 
         let caps = surface.get_capabilities(&adapter);
 
@@ -139,7 +142,7 @@ impl Renderer {
             ..Default::default()
         });
 
-        Self {
+        Ok(Self {
             surface,
             device,
             queue,
@@ -150,7 +153,7 @@ impl Renderer {
             text_texture: None,
             text_bind_group: None,
             text_texture_size: None,
-        }
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

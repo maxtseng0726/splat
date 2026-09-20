@@ -1,3 +1,4 @@
+mod error;
 mod renderer;
 
 use std::sync::Arc;
@@ -132,7 +133,14 @@ impl ApplicationHandler for App {
 
         self.buffer = Some(buffer);
 
-        self.renderer = Some(Renderer::new(window.clone()));
+        match Renderer::new(window.clone()) {
+            Ok(renderer) => self.renderer = Some(renderer),
+            Err(e) => {
+                eprintln!("Failed to initialize renderer: {e}");
+                event_loop.exit();
+                return;
+            }
+        }
         self.window = Some(window.clone());
 
         window.request_redraw();
