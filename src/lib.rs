@@ -21,6 +21,7 @@ pub struct App {
     font_system: FontSystem,
     swash_cache: SwashCache,
     buffer: Option<Buffer>,
+    pixel_buffer: Vec<u8>,
 }
 
 impl App {
@@ -34,16 +35,22 @@ impl App {
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
             buffer: None,
+            pixel_buffer: Vec::new(),
         }
     }
-    fn rasterize_text(&mut self) -> Vec<u8> {
+    fn rasterize_text(&mut self) {
         let width = self.width;
         let height = self.height;
 
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let required_size = (width * height * 4) as usize;
+
+        if self.pixel_buffer.len() != required_size {
+            self.pixel_buffer.resize(required_size, 0);
+        }
+        self.pixel_buffer.fill(0);
 
         let Some(buffer) = &mut self.buffer else {
-            return pixels;
+            return;
         };
 
         for run in buffer.layout_runs() {
@@ -86,18 +93,16 @@ impl App {
                             continue;
                         }
 
-                        let dst_index = ((py as usize * width as usize + px as usize) * 4) as usize;
+                        let dst_index = (py as usize * width as usize + px as usize) * 4;
 
-                        pixels[dst_index] = 255;
-                        pixels[dst_index + 1] = 255;
-                        pixels[dst_index + 2] = 255;
-                        pixels[dst_index + 3] = alpha;
+                        self.pixel_buffer[dst_index] = 255;
+                        self.pixel_buffer[dst_index + 1] = 255;
+                        self.pixel_buffer[dst_index + 2] = 255;
+                        self.pixel_buffer[dst_index + 3] = alpha;
                     }
                 }
             }
         }
-
-        pixels
     }
 }
 
@@ -108,6 +113,10 @@ impl ApplicationHandler for App {
             .with_inner_size(LogicalSize::new(self.width, self.height));
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
+        let size = window.inner_size();
+
+        self.width = size.width;
+        self.height = size.height;
 
         let metrics = Metrics::new(24.0, 32.0);
 
@@ -122,7 +131,9 @@ impl ApplicationHandler for App {
         self.buffer = Some(buffer);
 
         self.renderer = Some(Renderer::new(window.clone()));
-        self.window = Some(window);
+        self.window = Some(window.clone());
+
+        window.request_redraw();
     }
 
     fn window_event(
@@ -135,27 +146,39 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
 
             WindowEvent::Resized(size) => {
+                self.width = size.width;
+                self.height = size.height;
+
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
+                }
+                if let Some(window) = &self.window {
+                    window.request_redraw();
                 }
             }
 
             WindowEvent::RedrawRequested => {
-                let pixels = self.rasterize_text();
+                if self.width == 0 || self.height == 0 {
+                    return;
+                }
+                self.rasterize_text();
 
                 if let Some(renderer) = &mut self.renderer {
-                    renderer.update_texture(&pixels, self.width, self.height);
-                    renderer.render();
+                    renderer.update_texture(&self.pixel_buffer, self.width, self.height);
+
+                    if !renderer.render() {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                    }
                 }
             }
 
             _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
         }
     }
 }

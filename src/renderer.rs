@@ -14,6 +14,7 @@ pub struct Renderer {
     sampler: Sampler,
     text_texture: Option<Texture>,
     text_bind_group: Option<BindGroup>,
+    text_texture_size: Option<(u32, u32)>,
 }
 
 impl Renderer {
@@ -148,6 +149,7 @@ impl Renderer {
             sampler,
             text_texture: None,
             text_bind_group: None,
+            text_texture_size: None,
         }
     }
 
@@ -157,7 +159,13 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn update_texture(&mut self, pixels: &[u8], width: u32, height: u32) {
+    fn ensure_text_texture(&mut self, width: u32, height: u32) {
+        if let Some((tex_width, tex_height)) = self.text_texture_size {
+            if tex_width == width && tex_height == height {
+                return;
+            }
+        }
+
         let texture = self.device.create_texture(&TextureDescriptor {
             label: Some("text texture"),
             size: Extent3d {
@@ -172,26 +180,6 @@ impl Renderer {
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-
-        self.queue.write_texture(
-            TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: Origin3d::ZERO,
-                aspect: TextureAspect::All,
-            },
-            pixels,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
 
         let view = texture.create_view(&TextureViewDescriptor::default());
 
@@ -212,19 +200,48 @@ impl Renderer {
 
         self.text_texture = Some(texture);
         self.text_bind_group = Some(bind_group);
+        self.text_texture_size = Some((width, height));
     }
 
-    pub fn render(&self) {
+    pub fn update_texture(&mut self, pixels: &[u8], width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        self.ensure_text_texture(width, height);
+
+        self.queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: self.text_texture.as_ref().unwrap(),
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            pixels,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    pub fn render(&self) -> bool {
         use CurrentSurfaceTexture as Cst;
 
         let surface_texture = match self.surface.get_current_texture() {
             Cst::Success(t) | Cst::Suboptimal(t) => t,
             Cst::Outdated => {
                 self.surface.configure(&self.device, &self.config);
-                return;
+                return false;
             }
-            Cst::Timeout | Cst::Occluded => return,
-            Cst::Lost | Cst::Validation => return,
+            Cst::Timeout | Cst::Occluded => return false,
+            Cst::Lost | Cst::Validation => return false,
         };
 
         let view = surface_texture
@@ -267,5 +284,6 @@ impl Renderer {
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(surface_texture);
+        true
     }
 }
