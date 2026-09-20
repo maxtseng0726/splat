@@ -16,6 +16,7 @@ pub struct App {
     title: String,
     width: u32,
     height: u32,
+    text: String,
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     font_system: FontSystem,
@@ -25,11 +26,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(title: String, width: u32, height: u32) -> Self {
+    pub fn new(title: String, width: u32, height: u32, text: String) -> Self {
         Self {
             title,
             width,
             height,
+            text,
             window: None,
             renderer: None,
             font_system: FontSystem::new(),
@@ -124,7 +126,7 @@ impl ApplicationHandler for App {
 
         buffer.set_size(Some(self.width as f32), Some(self.height as f32));
 
-        buffer.set_text("Hello, World!", &Attrs::new(), Shaping::Advanced, None);
+        buffer.set_text(&self.text, &Attrs::new(), Shaping::Advanced, None);
 
         buffer.shape_until_scroll(&mut self.font_system, true);
 
