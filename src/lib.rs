@@ -2,7 +2,6 @@ mod renderer;
 
 use std::sync::Arc;
 
-use clap::Parser;
 use cosmic_text::{Attrs, Buffer, FontSystem, Metrics, Shaping, SwashCache};
 use renderer::Renderer;
 use winit::{
@@ -12,19 +11,6 @@ use winit::{
     event_loop::ActiveEventLoop,
     window::{Window, WindowId},
 };
-
-#[derive(Parser)]
-#[command(name = "splat", about = "Open an empty window via wgpu and winit")]
-pub struct Cli {
-    #[arg(short, long, default_value = "Splat App")]
-    pub title: String,
-
-    #[arg(long, default_value_t = 800)]
-    pub width: u32,
-
-    #[arg(long, default_value_t = 600)]
-    pub height: u32,
-}
 
 pub struct App {
     title: String,
